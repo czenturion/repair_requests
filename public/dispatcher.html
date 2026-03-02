@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Диспетчер</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Панель диспетчера</h1>
+        <div class="statusFilter">
+            <label>Фильтр по статусу:</label>
+            <select id="statusFilter">
+                <option value="">Все</option>
+                <option value="new">Новые</option>
+                <option value="assigned">Назначенные</option>
+                <option value="in_progress">В работе</option>
+                <option value="done">Выполненные</option>
+                <option value="canceled">Отменённые</option>
+            </select>
+            <button onclick="loadRequests()">Применить</button>
+        </div>
+        <div>
+            <h2>Создать заявку</h2>
+            <form id="createForm">
+                <input type="text" id="clientName" placeholder="Клиент" required>
+                <input type="text" id="phone" placeholder="Телефон" required>
+                <input type="text" id="address" placeholder="Адрес" required>
+                <textarea id="problemText" placeholder="Описание" required></textarea>
+                <button type="submit">Создать заявку</button>
+            </form>
+        </div>
+        <div id="requestsList"></div>
+    </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('userId') || 1; // по умолчанию диспетчер с id=1
+
+        async function loadRequests() {
+            const status = document.getElementById('statusFilter').value;
+            let apiUrl = '/api/requests';
+            if (status) apiUrl += '?status=' + status;
+            const res = await fetch(apiUrl);
+            const requests = await res.json();
+            const mastersRes = await fetch('/api/users?role=master'); // но у нас нет фильтра, получим всех и отфильтруем
+            const users = await mastersRes.json();
+            const masters = users.filter(u => u.role === 'master');
+
+            let html = '<h2>Заявки</h2><table border="1"><tr><th>ID</th><th>Клиент</th><th>Телефон</th><th>Адрес</th><th>Статус</th><th>Мастер</th><th>Действия</th></tr>';
+            requests.forEach(req => {
+                html += `<tr>
+                    <td>${req.id}</td>
+                    <td>${req.clientName}</td>
+                    <td>${req.phone}</td>
+                    <td>${req.address}</td>
+                    <td>${req.status}</td>
+                    <td>${req.assignedTo || '—'}</td>
+                    <td>`;
+                if (req.status === 'new') {
+                    html += `<select id="masterSelect_${req.id}">${masters.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}</select>
+                             <button onclick="assignMaster(${req.id})">Назначить</button>`;
+                }
+                if (['new', 'assigned'].includes(req.status)) {
+                    html += ` <button class="danger" onclick="cancelRequest(${req.id})">Отменить</button>`;
+                }
+                html += `</td></tr>`;
+            });
+            html += '</table>';
+            document.getElementById('requestsList').innerHTML = html;
+        }
+
+        async function assignMaster(requestId) {
+            const masterId = document.getElementById('masterSelect_' + requestId).value;
+            const res = await fetch(`/api/requests/${requestId}/assign`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ masterId })
+            });
+            if (res.ok) {
+                alert('Назначено');
+                loadRequests();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + err.error);
+            }
+        }
+
+        async function cancelRequest(requestId) {
+            if (!confirm('Отменить заявку?')) return;
+            const res = await fetch(`/api/requests/${requestId}/cancel`, {
+                method: 'PATCH'
+            });
+            if (res.ok) {
+                loadRequests();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + err.error);
+            }
+        }
+
+        document.getElementById('createForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                clientName: document.getElementById('clientName').value,
+                phone: document.getElementById('phone').value,
+                address: document.getElementById('address').value,
+                problemText: document.getElementById('problemText').value
+            };
+            const res = await fetch('/api/requests', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                alert('Заявка создана');
+                loadRequests();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + err.error);
+            }
+        });
+
+        loadRequests();
+    </script>
+</body>
+
+</html>

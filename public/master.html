@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Мастер</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Панель мастера</h1>
+        <div id="requestsList"></div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const masterId = urlParams.get('userId');
+        if (!masterId) {
+            alert('Не указан мастер');
+            window.location.href = '/';
+        }
+
+        async function loadRequests() {
+            const res = await fetch(`/api/requests?assignedTo=${masterId}`);
+            const requests = await res.json();
+
+            let html = '<h2>Мои заявки</h2><table border="1"><tr><th>ID</th><th>Клиент</th><th>Адрес</th><th>Статус</th><th>Действия</th></tr>';
+            requests.forEach(req => {
+                html += `<tr>
+                    <td>${req.id}</td>
+                    <td>${req.clientName}</td>
+                    <td>${req.address}</td>
+                    <td>${req.status}</td>
+                    <td>`;
+                if (req.status === 'assigned') {
+                    html += `<button class="success" onclick="takeRequest(${req.id})">Взять в работу</button>`;
+                } else if (req.status === 'in_progress') {
+                    html += `<button class="success" onclick="completeRequest(${req.id})">Завершить</button>`;
+                }
+                html += `</td></tr>`;
+            });
+            html += '</table>';
+            document.getElementById('requestsList').innerHTML = html;
+        }
+
+        async function takeRequest(requestId) {
+            const res = await fetch(`/api/requests/${requestId}/take`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ masterId })
+            });
+            if (res.ok) {
+                alert('Заявка взята в работу');
+                loadRequests();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + err.error);
+            }
+        }
+
+        async function completeRequest(requestId) {
+            const res = await fetch(`/api/requests/${requestId}/complete`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ masterId })
+            });
+            if (res.ok) {
+                alert('Заявка завершена');
+                loadRequests();
+            } else {
+                const err = await res.json();
+                alert('Ошибка: ' + err.error);
+            }
+        }
+
+        loadRequests();
+    </script>
+</body>
+
+</html>
