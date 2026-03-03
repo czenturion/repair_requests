@@ -6,6 +6,9 @@ services:
       - "3000:3000"
     volumes:
       - ./public:/app/public
-      - ./database.sqlite:/app/database.sqlite   # сохраняем базу между запусками
+      - db_data:/app/data
     environment:
       - NODE_ENV=production
+
+volumes:
+  db_data:

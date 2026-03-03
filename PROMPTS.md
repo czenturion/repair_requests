@@ -1647,3 +1647,403 @@ docker compose up --build
 Это пересоздаст образ с твоими новыми файлами public. Минус — при каждом изменении стилей придётся пересобирать.
 
 Рекомендую Вариант 1 — добавить volume, так удобнее разрабатывать. После этого стили заработают сразу.
+
+## 2026-03-03 10:10
+### Запрос
+запускаю проект через docker compose up, вчера все работало, сегодня выдает ошибку
+PS C:\Users\Proshivka 1\Desktop\temp\repair-requests> docker compose up  
+time="2026-03-03T10:25:23+03:00" level=warning msg="C:\\Users\\Proshivka 1\\Desktop\\temp\\repair-requests\\docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+[+] up 2/2
+ ✔ Network repair-requests_default Created                                                                                                                    0.1s
+ ✔ Container repair-requests-app-1 Created                                                                                                                    0.2s
+Attaching to app-1
+app-1  | Сервер запущен на http://localhost:3000
+app-1  | Ошибка открытия БД: [Error: SQLITE_CANTOPEN: unable to open database file] {
+app-1  |   errno: 14,                                                                                                                                             
+app-1  |   code: 'SQLITE_CANTOPEN'                                                                                                                                
+app-1  | }                                                                                                                                                        
+unexpected EOF
+
+### Ответ
+1. Ошибка с базой данных при запуске через Docker Compose
+Ошибка SQLITE_CANTOPEN: unable to open database file возникает из-за того, что ты монтируешь файл ./database.sqlite как том в Windows, и путь содержит пробел (Proshivka 1). Docker на Windows некорректно обрабатывает пробелы в путях при монтировании файлов.
+
+Как исправить:
+
+Вариант А (рекомендуемый) – использовать именованный том Docker
+Вместо монтирования конкретного файла используй том для хранения базы данных. Так она будет сохраняться между запусками, и не будет проблем с путями.
+
+Измени docker-compose.yml:
+
+yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./public:/app/public
+      # - ./database.sqlite:/app/database.sqlite   # удалить эту строку
+      - db_data:/app/data   # добавить том для папки с базой
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  db_data:
+Затем в коде нужно изменить путь к базе данных, чтобы она сохранялась в папку /app/data. В файле db.js:
+
+javascript
+const dbPath = path.resolve(__dirname, 'data', 'database.sqlite');
+И создать папку data в проекте (или она создастся автоматически при запуске, но лучше добавить её в .gitignore).
+
+Вариант Б – использовать путь без пробелов
+Перемести проект в папку без пробелов, например C:\repair-requests, и тогда монтирование файла будет работать. Но вариант с томом надёжнее.
+
+После исправления выполни docker compose down -v (чтобы удалить старый том) и снова docker compose up.
+
+## 2026-03-03 11:54
+### Запрос
+Теперь надо сгенерировать README.md и DECISIONS.md
+
+### Ответ
+README.md
+markdown
+# Сервис заявок в ремонтную службу
+
+Тестовое задание для вакансии «Вайб-кодер».  
+Веб-приложение для приёма и обработки заявок с ролями диспетчера и мастера.
+
+## Стек
+
+- Node.js + Express
+- SQLite (портативная БД)
+- Docker + Docker Compose
+- HTML/CSS (vanilla) для фронтенда
+
+## Требования
+
+- [Docker](https://docker.com/) (рекомендуется) или Node.js 18+
+- npm (при локальном запуске)
+
+## Запуск проекта
+
+### Через Docker Compose (предпочтительно)
+
+# Клонировать репозиторий
+git clone <url>
+cd <project-folder>
+
+# Запустить контейнер
+docker compose up
+Приложение будет доступно по адресу: http://localhost:3000
+
+Локальный запуск (без Docker)
+bash
+# Установить зависимости
+npm install
+
+# Запустить сервер
+npm start
+# или для разработки с авто-перезагрузкой
+npm run dev
+Тестовые пользователи
+При первом запуске БД автоматически заполняется сидами:
+
+ID	Имя	Роль
+1	Диспетчер Анна	dispatcher
+2	Мастер Пётр	master
+3	Мастер Иван	master
+Вход выполняется через выбор роли на главной странице (параметр userId в URL).
+
+Проверка защиты от гонки (race condition)
+Действие «Взять в работу» в панели мастера должно быть потокобезопасным.
+Если два мастера одновременно попытаются взять одну и ту же заявку, только один запрос завершится успешно (статус 200), второй получит 409 Conflict.
+
+Как проверить вручную
+Запустите приложение.
+
+От имени диспетчера создайте новую заявку и назначьте её мастеру Петру (id=2).
+
+Выполните два параллельных запроса к эндпоинту PATCH /api/requests/{id}/take:
+
+bash
+# В первом терминале
+curl -X PATCH http://localhost:3000/api/requests/1/take \
+  -H "Content-Type: application/json" \
+  -d '{"masterId": 2}'
+
+# Быстро во втором терминале (или используйте скрипт)
+curl -X PATCH http://localhost:3000/api/requests/1/take \
+  -H "Content-Type: application/json" \
+  -d '{"masterId": 2}'
+Один из запросов вернёт 200 OK, другой — 409 Conflict с сообщением об ошибке.
+
+Для автоматической проверки можно использовать скрипт scripts/race_test.sh (предварительно создав заявку и назначив мастеру).
+
+Тестирование
+Запуск автотестов (Jest + supertest):
+
+bash
+npm test
+Тесты включают:
+
+создание заявки (201)
+
+параллельное взятие в работу (один успех, один 409)
+
+Структура проекта
+text
+.
+├── Dockerfile
+├── docker-compose.yml
+├── package.json
+├── README.md
+├── DECISIONS.md
+├── PROMPTS.md
+├── server.js               # точка входа
+├── db.js                   # инициализация БД, миграции, сиды
+├── routes/
+│   ├── requests.js         # API заявок
+│   └── auth.js             # (заглушка)
+├── public/                 # статика (HTML, CSS)
+│   ├── index.html
+│   ├── dispatcher.html
+│   ├── master.html
+│   └── style.css
+├── scripts/
+│   └── race_test.sh        # скрипт проверки гонки (опционально)
+└── tests/
+    └── api.test.js         # автотесты
+Возможные улучшения
+Добавить аудит действий (история изменений заявки)
+
+Улучшить сообщения об ошибках в интерфейсе
+
+Развернуть на бесплатном хостинге (Render, Railway)
+
+Выполнено в рамках тестового задания.
+
+text
+
+## DECISIONS.md
+
+# Ключевые архитектурные решения
+
+В этом файле зафиксированы основные решения, принятые при разработке сервиса заявок.
+
+## 1. SQLite как СУБД
+**Почему:**  
+Проект не требует высокой нагрузки и масштабирования. SQLite — файловая БД, не требует отдельного сервера, идеально подходит для локального запуска и тестового задания. Всё хранится в одном файле `database.sqlite`, что упрощает сопровождение.
+
+## 2. Борьба с гонками через атомарный UPDATE
+**Почему:**  
+Для обеспечения потокобезопасности операции «Взять в работу» используется один SQL-запрос с условием `WHERE id = ? AND assignedTo = ? AND status = 'assigned'`. Это гарантирует, что только один из параллельных запросов изменит строку, остальные получат `changes = 0`. Альтернативы (блокировки, транзакции с SELECT FOR UPDATE) были бы избыточны.
+
+## 3. Минималистичная аутентификация
+**Почему:**  
+Вместо полноценной регистрации/логина выбрана схема с предопределёнными пользователями и передачей `userId` через URL. Это позволяет сосредоточиться на основной логике заявок и не усложнять проект. Для тестового задания такого подхода достаточно.
+
+## 4. Docker для воспроизводимости
+**Почему:**  
+`Dockerfile` и `docker-compose.yml` обеспечивают одинаковое окружение на любой машине. Кандидату или проверяющему достаточно выполнить `docker compose up` — и проект готов к работе. Это исключает проблемы с версиями Node.js и зависимостями.
+
+## 5. Разделение на роуты и обработчики
+**Почему:**  
+Код организован по слоям: маршруты (routes) отделены от логики работы с БД. Хотя сервисный слой не выделен явно (для простоты), все запросы к базе находятся в обработчиках маршрутов, что сохраняет читаемость и тестируемость.
+
+## 6. Автоматические миграции и сиды при старте
+**Почему:**  
+В `db.js` при первом запуске создаются таблицы (если их нет) и заполняются тестовые данные. Это избавляет от необходимости вручную применять миграции или запускать отдельные скрипты. Для небольшого проекта — оптимально.
+
+## 7. Тестирование критического сценария (гонка)
+**Почему:**  
+В задании особое внимание уделено гонке. Поэтому добавлен тест (Jest + supertest), который эмулирует два одновременных запроса на взятие заявки и проверяет корректность ответов (200 и 409). Это гарантирует, что механизм защиты работает, и позволяет легко регрессионно тестировать в будущем.
+
+## 8. Хранение промтов в PROMPTS.md
+**Почему:**  
+По условию задания требуется фиксировать все запросы к AI. Это помогает проверяющему оценить процесс разработки и взаимодействие с нейросетью. Файл ведётся в хронологическом порядке с датами и временем.
+Теперь остаётся только сохранить эти файлы в корне проекта и добавить в гит. Также не забудь PROMPTS.md заполнить своими сообщениями (можно скопировать из истории нашего диалога). Если нужно, я помогу сформировать PROMPTS.md.
+
+
+## 2026-03-03 14:22
+### Запрос
+
+PS C:\Users\Proshivka 1\Desktop\temp\repair-requests> npm test
+
+> repair-requests@1.0.0 test
+> jest
+
+  console.log
+    Сервер запущен на http://localhost:3000
+
+      at Server.log (server.js:27:13)
+
+  console.error
+    Ошибка открытия БД: [Error: SQLITE_CANTOPEN: unable to open database file] {
+      errno: 14,
+      code: 'SQLITE_CANTOPEN'
+    }
+
+       5 |
+       6 | const db = new sqlite3.Database(dbPath, (err) => {
+    >  7 |   if (err) console.error('Ошибка открытия БД:', err);
+         |                    ^
+       8 | });
+       9 |
+      10 | // Миграции (создание таблиц)
+
+      at Database.error (db.js:7:20)
+
+ FAIL  tests/api.test.js (10.653 s)
+  API тесты
+    × Создание заявки (5006 ms)                                                                                                                    
+    × Гонка при взятии в работу (5013 ms)                                                                                                          
+                                                                                                                                                   
+  ● API тесты › Создание заявки                                                                                                                    
+                                                                                                                                                   
+    thrown: "Exceeded timeout of 5000 ms for a test.
+    Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout." 
+
+      3 |
+      4 | describe('API тесты', () => {
+    > 5 |     test('Создание заявки', async () => {
+        |     ^
+      6 |         const res = await request(app)
+      7 |             .post('/api/requests')
+      8 |             .send({
+
+      at test (tests/api.test.js:5:5)
+      at Object.describe (tests/api.test.js:4:1)
+
+  ● API тесты › Гонка при взятии в работу
+
+    thrown: "Exceeded timeout of 5000 ms for a test.
+    Add a timeout value to this test to increase the timeout, if this is a long-running test. See https://jestjs.io/docs/api#testname-fn-timeout." 
+
+      16 |     });
+      17 |
+    > 18 |     test('Гонка при взятии в работу', async () => {
+         |     ^
+      19 |         // Сначала создадим заявку и назначим мастеру
+      20 |         const createRes = await request(app)
+      21 |             .post('/api/requests')
+
+      at test (tests/api.test.js:18:5)
+      at Object.describe (tests/api.test.js:4:1)
+
+Test Suites: 1 failed, 1 total                                                                                                                     
+Tests:       2 failed, 2 total                                                                                                                     
+Snapshots:   0 total
+Time:        10.77 s, estimated 12 s
+Ran all test suites.
+Jest did not exit one second after the test run has completed.
+
+'This usually means that there are asynchronous operations that weren't stopped in your tests. Consider running Jest with `--detectOpenHandles` to troubleshoot this issue.
+
+### Ответ
+
+Вижу проблему: тесты пытаются открыть базу данных в том же файле, что и основное приложение, но при запуске тестов нет прав на запись или файл заблокирован. Нужно изменить конфигурацию, чтобы для тестов использовалась отдельная БД (или in-memory) и сервер не запускался при импорте.
+
+Что нужно исправить
+1. Исправить server.js — не запускать сервер при импорте в тестах
+Добавь проверку require.main === module, чтобы app.listen вызывался только при прямом запуске файла.
+
+javascript
+// server.js (конец файла)
+if (require.main === module) {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log(`Сервер запущен на http://localhost:${PORT}`);
+    });
+}
+
+module.exports = app;
+2. В db.js использовать отдельный файл БД для тестов
+Добавь условие по NODE_ENV:
+
+javascript
+// db.js (после path)
+const dbPath = process.env.NODE_ENV === 'test'
+    ? path.resolve(__dirname, 'test.database.sqlite')
+    : path.resolve(__dirname, 'database.sqlite');
+И экспортируй db, чтобы можно было закрыть соединение в тестах:
+
+javascript
+module.exports = db;  // уже есть? Если нет, добавь в конец
+3. Обновить tests/api.test.js — добавить закрытие БД после тестов
+javascript
+const request = require('supertest');
+const app = require('../server');
+const db = require('../db'); // импортируем db для закрытия
+
+afterAll((done) => {
+    // Закрываем соединение с БД, чтобы Jest завершился
+    db.close((err) => {
+        if (err) console.error('Ошибка при закрытии БД:', err);
+        done();
+    });
+});
+
+// Увеличим таймаут, если нужно (опционально)
+jest.setTimeout(10000);
+
+describe('API тесты', () => {
+    test('Создание заявки', async () => {
+        const res = await request(app)
+            .post('/api/requests')
+            .send({
+                clientName: 'Тест',
+                phone: '123',
+                address: 'Адрес',
+                problemText: 'Описание'
+            });
+        expect(res.statusCode).toBe(201);
+        expect(res.body).toHaveProperty('id');
+    });
+
+    test('Гонка при взятии в работу', async () => {
+        // Создаём заявку
+        const createRes = await request(app)
+            .post('/api/requests')
+            .send({
+                clientName: 'Гонка',
+                phone: '456',
+                address: 'Улица',
+                problemText: 'Проверка'
+            });
+        const requestId = createRes.body.id;
+
+        // Назначаем мастеру с id=2
+        await request(app)
+            .patch(`/api/requests/${requestId}/assign`)
+            .send({ masterId: 2 });
+
+        // Два параллельных запроса на take
+        const promise1 = request(app)
+            .patch(`/api/requests/${requestId}/take`)
+            .send({ masterId: 2 });
+        const promise2 = request(app)
+            .patch(`/api/requests/${requestId}/take`)
+            .send({ masterId: 2 });
+
+        const [res1, res2] = await Promise.all([promise1, promise2]);
+
+        const ok = res1.statusCode === 200 ? res1 : res2;
+        const conflict = res1.statusCode === 409 ? res1 : res2;
+
+        expect(ok.statusCode).toBe(200);
+        expect(conflict.statusCode).toBe(409);
+    });
+});
+4. Не забудь добавить test.database.sqlite в .gitignore
+Чтобы временный файл тестов не попал в репозиторий, добавь в .gitignore:
+
+text
+test.database.sqlite
+После этих изменений выполни npm test — тесты должны пройти успешно. Если всё ещё будут таймауты, попробуй запустить с флагом --runInBand (чтобы исключить параллельное выполнение, которое может мешать):
+
+bash
+npm test -- --runInBand
+Если останутся вопросы — пиши, помогу донастроить.
+

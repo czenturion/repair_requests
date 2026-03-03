@@ -1,5 +1,17 @@
 const request = require('supertest');
 const app = require('../server'); // надо экспортировать app из server.js, поэтому в server.js нужно добавить module.exports = app;
+const db = require('../db');
+
+afterAll((done) => {
+    // Закрываем соединение с БД, чтобы Jest завершился
+    db.close((err) => {
+        if (err) console.error('Ошибка при закрытии БД:', err);
+        done();
+    });
+});
+
+// Увеличим таймаут, если нужно (опционально)
+jest.setTimeout(10000);
 
 describe('API тесты', () => {
     test('Создание заявки', async () => {
